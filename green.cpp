@@ -1,13 +1,14 @@
 #include <cassert>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <iostream>
 
 constexpr int max_gthreads = 4;
 constexpr int stack_size = 0x400000;
 
-struct Context {
+struct Context
+{
   uint64_t rsp;
   uint64_t r15;
   uint64_t r14;
@@ -17,38 +18,47 @@ struct Context {
   uint64_t rbp;
 };
 
-enum class State {
+enum class State
+{
   unused,
   running,
   ready,
 };
 
-struct RegisterArgs{
+struct RegisterArgs
+{
   uint64_t rdi;
   uint64_t rsi;
   uint64_t rdx;
   uint64_t rcx;
-  uint64_t r8 ;
-  uint64_t r9 ;
+  uint64_t r8;
+  uint64_t r9;
 };
 
-struct gthread {
+struct gthread
+{
   Context ctx;
   RegisterArgs args;
   State state;
 };
 
 static gthread tbl[max_gthreads];
-static gthread *cur_thrd;
+static gthread* cur_thrd;
 
-void gtinit(void);
-[[noreturn]] void gtret(int ret);
-void gtswtch(Context *oldctx, Context *newctx);
-bool gtyield();
-static void gtstop(void);
+void
+gtinit(void);
+[[noreturn]] void
+gtret(int ret);
+void
+gtswtch(Context* oldctx, Context* newctx);
+bool
+gtyield();
+static void
+gtstop(void);
 
-
-void gtswtch(Context *oldctx, Context *newctx, RegisterArgs& args){
+void
+gtswtch(Context* oldctx, Context* newctx, RegisterArgs& args)
+{
   (void)oldctx;
   (void)newctx;
 
@@ -57,8 +67,8 @@ void gtswtch(Context *oldctx, Context *newctx, RegisterArgs& args){
   register uint64_t reg_r10 asm("r10") = args.rdi;
   register uint64_t reg_r11 asm("r11") = args.rsi;
 
-  asm(
-      "mov     %%rbp, %%rax\n" // preserve base pointer <-- this line needs checking in calling convention
+  asm("mov     %%rbp, %%rax\n" // preserve base pointer <-- this line needs
+                               // checking in calling convention
 
       "mov     %%rsp, 0x00(%%rdi)\n" // context switching
       "mov     %%r15, 0x08(%%rdi)\n"
@@ -77,7 +87,8 @@ void gtswtch(Context *oldctx, Context *newctx, RegisterArgs& args){
       "mov     0x30(%%rsi), %%rbp\n"
 
       // move from old stack (now %rax) to new stack (now %rbp)
-      // above is an unverified choice of words, must confirm in calling convention
+      // above is an unverified choice of words, must confirm in calling
+      // convention
 
       "mov %%r10, %%rdi\n" // argument passing
       "mov %%r11, %%rsi\n"
@@ -92,12 +103,16 @@ void gtswtch(Context *oldctx, Context *newctx, RegisterArgs& args){
       : "memory", "rdi", "rsi");
 }
 
-void gtinit() {
+void
+gtinit()
+{
   cur_thrd = &tbl[0];
   cur_thrd->state = State::running;
 }
 
-[[noreturn]] void gtret(int ret) {
+[[noreturn]] void
+gtret(int ret)
+{
   if (cur_thrd != &tbl[0]) {
     cur_thrd->state = State::unused;
     gtyield();
@@ -110,8 +125,10 @@ void gtinit() {
   exit(ret);
 }
 
-bool gtyield() {
-  gthread *thrd;
+bool
+gtyield()
+{
+  gthread* thrd;
   Context *oldctx, *newctx;
 
   thrd = cur_thrd;
@@ -135,14 +152,18 @@ bool gtyield() {
   return true;
 }
 
-static void gtstop() { gtret(0); }
+static void
+gtstop()
+{
+  gtret(0);
+}
 
-// int gtgo(void (*f)()) {
-
-template <auto &Function, typename... Types>
-int gtgo(Types... args) {
-  gthread *p = nullptr;
-  for (auto &thrd : tbl) {
+template<typename F, typename... Types>
+int
+gtgo(F& f, Types... args)
+{
+  gthread* p = nullptr;
+  for (auto& thrd : tbl) {
     p = &thrd;
     if (p == &tbl[max_gthreads])
       return -1;
@@ -150,39 +171,46 @@ int gtgo(Types... args) {
       break;
   }
 
-  std::uint8_t *stack = new std::uint8_t[stack_size];
+  std::uint8_t* stack = new std::uint8_t[stack_size];
   if (stack == nullptr)
     return -1;
 
-  *(uint64_t *)&stack[stack_size - (1 * sizeof(uint64_t))] = (uint64_t)gtstop;
-  *(uint64_t *)&stack[stack_size - (2 * sizeof(uint64_t))] = (uint64_t)Function;
+  *(uint64_t*)&stack[stack_size - (1 * sizeof(uint64_t))] = (uint64_t)gtstop;
+  *(uint64_t*)&stack[stack_size - (2 * sizeof(uint64_t))] = (uint64_t)f;
   p->ctx.rsp = (uint64_t)&stack[stack_size - (2 * sizeof(uint64_t))];
   p->state = State::ready;
-  p->args = RegisterArgs{*reinterpret_cast<uint64_t*>(&args)..., 0, 0, 0};
+  p->args = RegisterArgs{ *reinterpret_cast<uint64_t*>(&args)..., 0, 0, 0 };
 
   return 0;
 }
 
-void f(int j, int k, std::function<void(int, int, int)>* call) {
+void
+f(int j, int k, std::function<void(int, int, int)>* call)
+{
   static int x;
   int id = ++x;
 
   (*call)(id, j, k);
 
   for (int i = 0; i < 10; i++) {
-    printf("Thread-%d: %d\n", id, i);
+    std::cout << "Thread-" << id << ": " << i << '\n';
     gtyield();
   }
 }
 
-void callback(int id, int i, int j) {
-  printf("callback from Thread-%d: Args: %d, %d\n", id, i, j);
+void
+callback(int id, int i, int j)
+{
+  std::cout << "Callback from Thread-" << id << ": Args: " << i << ", " << j
+            << '\n';
 }
 
-int main(void) {
+int
+main(void)
+{
   gtinit();
   std::function<void(int, int, int)> function = callback;
-  gtgo<f>(5, 6, &function);
-  gtgo<f>(12, 13, &function);
+  gtgo(f, 5, 6, &function);
+  gtgo(f, 12, 13, &function);
   gtret(1);
 }
