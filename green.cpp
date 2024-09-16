@@ -1,8 +1,11 @@
 #include <cassert>
+#include <concepts>
 #include <cstdint>
-#include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <stack>
+#include <tuple>
+#include <type_traits>
 
 constexpr int max_gthreads = 4;
 constexpr int stack_size = 0x400000;
@@ -25,20 +28,43 @@ enum class State
   ready,
 };
 
-struct RegisterArgs
+struct IntArgs
 {
-  uint64_t rdi;
-  uint64_t rsi;
-  uint64_t rdx;
-  uint64_t rcx;
-  uint64_t r8;
-  uint64_t r9;
+  uint64_t rdi = 0;
+  uint64_t rsi = 0;
+  uint64_t rdx = 0;
+  uint64_t rcx = 0;
+  uint64_t r8 = 0;
+  uint64_t r9 = 0;
+
+  uint64_t argcnt = 0;
 };
+
+struct FPArgs
+{
+  double xmm0 = 0;
+  double xmm1 = 0;
+  double xmm2 = 0;
+  double xmm3 = 0;
+  double xmm4 = 0;
+  double xmm5 = 0;
+  double xmm6 = 0;
+  double xmm7 = 0;
+
+  uint64_t argcnt = 0;
+};
+
+struct LngDblArgs : std::stack<long double>
+{};
+
+struct ArgStack : std::stack<uint8_t>
+{};
 
 struct gthread
 {
   Context ctx;
-  RegisterArgs args;
+  IntArgs iargs;
+  FPArgs fargs;
   State state;
 };
 
@@ -56,8 +82,123 @@ gtyield();
 static void
 gtstop(void);
 
+IntArgs iargs;
+FPArgs fargs;
+LngDblArgs ldargstack;
+ArgStack iargstack;
+ArgStack fargstack;
+int int_cnt = 0;
+int fp_cnt = 0;
+
+template<typename T, std::size_t I = 0U>
+struct TupleIterator
+{
+  template<typename C>
+  void operator()(T& objects, C callback)
+  {
+    if constexpr (I < std::tuple_size_v<T>) {
+      callback(std::get<I>(objects));
+      TupleIterator<T, I + 1U>{}(objects, callback);
+    }
+  }
+};
+
+constexpr void
+arg_sorter_helper(auto elem)
+{
+  auto assign = [&elem](auto& l) { l = elem; };
+
+  if constexpr (std::same_as<long double, decltype(elem)>) {
+    ldargstack.push(elem);
+    return;
+  }
+
+  if (std::is_integral_v<decltype(elem)> && int_cnt >= 6) {
+    int_cnt++;
+    iargstack.push(elem);
+    return;
+  }
+
+  if (std::is_floating_point_v<decltype(elem)> && fp_cnt >= 8) {
+    fp_cnt++;
+    fargstack.push(elem);
+    return;
+  }
+
+  if constexpr (std::is_integral_v<decltype(elem)>) {
+    int_cnt++;
+    switch (int_cnt) {
+      case 1:
+        assign(iargs.rdi);
+        break;
+      case 2:
+        assign(iargs.rsi);
+        break;
+      case 3:
+        assign(iargs.rdx);
+        break;
+      case 4:
+        assign(iargs.rcx);
+        break;
+      case 5:
+        assign(iargs.r8);
+        break;
+      case 6:
+        assign(iargs.r9);
+        break;
+      default:
+        __builtin_unreachable();
+    }
+    return;
+  } // if constexpr integral
+
+  if constexpr (std::is_floating_point_v<decltype(elem)>) {
+    fp_cnt++;
+    switch (fp_cnt) {
+      case 1:
+        assign(fargs.xmm0);
+        break;
+      case 2:
+        assign(fargs.xmm1);
+        break;
+      case 3:
+        assign(fargs.xmm2);
+        break;
+      case 4:
+        assign(fargs.xmm3);
+        break;
+      case 5:
+        assign(fargs.xmm4);
+        break;
+      case 6:
+        assign(fargs.xmm5);
+        break;
+      case 7:
+        assign(fargs.xmm6);
+        break;
+      case 8:
+        assign(fargs.xmm7);
+        break;
+      default:
+        __builtin_unreachable();
+    }
+    return;
+  } // if constexpr floating
+
+  iargs.argcnt = int_cnt;
+  fargs.argcnt = fp_cnt;
+}
+
+template<typename... Types>
+void constexpr arg_sorter(Types... args)
+{
+  std::tuple<Types...> args_tuple{ args... };
+  TupleIterator<decltype(args_tuple)> ti;
+  ti(args_tuple, [](auto elem) { arg_sorter_helper(elem); });
+}
+
 void
-gtswtch(Context* oldctx, Context* newctx, RegisterArgs& args)
+gtswtch(Context* oldctx, Context* newctx, IntArgs& args)
 {
   (void)oldctx;
   (void)newctx;
@@ -148,7 +289,7 @@ gtyield()
   newctx = &thrd->ctx;
 
   cur_thrd = thrd;
-  gtswtch(oldctx, newctx, thrd->args);
+  gtswtch(oldctx, newctx, thrd->iargs);
   return true;
 }
 
@@ -179,8 +320,9 @@ gtgo(F& f, Types... args)
   *(uint64_t*)&stack[stack_size - (2 * sizeof(uint64_t))] = (uint64_t)f;
   p->ctx.rsp = (uint64_t)&stack[stack_size - (2 * sizeof(uint64_t))];
   p->state = State::ready;
-  p->args = RegisterArgs{ *reinterpret_cast<uint64_t*>(&args)..., 0, 0, 0 };
+  p->iargs = IntArgs{ *reinterpret_cast<uint64_t*>(&args)... };
 
+  gtyield();
   return 0;
 }
 
