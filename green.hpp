@@ -1,12 +1,35 @@
-#include <cassert>
-#include <concepts>
-#include <cstddef>
+/*
+  Copyright (c) 2025, Amritpal Singh
+  This file is part of Green.
+  Green is free software: you can redistribute it and/or modify it under the
+  terms of the GNU General Public License as published by the Free Software
+  Foundation, either version 3 of the License, or (at your option) any later
+  version.
+
+  Green is distributed in the hope that it will be useful, but WITHOUT ANY
+  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+  A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License along with
+  Green. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+Speacial thanks to Quentin Carbonneaux for their public domain work on gthreads.
+Links: https://github.com/mpu/gthreads (see branch code0)
+       https://c9x.me/articles/gthreads/intro.html
+*/
+
+/*
+This C++ reiteration merely supports a nicer interface to passing a few types of
+arguments and that is all. It was mostly a test/tinkering exercise for myself.
+*/
+
+#ifndef ICE_GREEN_THREADS_H
+#define ICE_GREEN_THREADS_H
+
 #include <cstdint>
-#include <functional>
-#include <iostream>
 #include <stack>
-#include <tuple>
-#include <type_traits>
 
 constexpr int max_gthreads = 4;
 constexpr int stack_size = 0x400000;
@@ -74,14 +97,28 @@ static gthread* cur_thrd;
 
 void
 gtinit(void);
+
 [[noreturn]] void
 gtret(int ret);
+
 void
 gtswtch(Context* oldctx, Context* newctx);
+
 bool
 gtyield();
-static void
+
+void
 gtstop(void);
+
+#ifdef ICE_GREEN_IMPL_H
+
+#include <cassert>
+#include <concepts>
+#include <cstddef>
+#include <functional>
+#include <iostream>
+#include <tuple>
+#include <type_traits>
 
 IntArgs iargs;
 FPArgs fargs;
@@ -366,12 +403,15 @@ callback(int id, int i, int j)
             << '\n';
 }
 
-int
-main(void)
-{
-  gtinit();
-  std::function<void(int, int, int)> function = callback;
-  gtgo(f, 5, 6, &function);
-  gtgo(f, 12, 13, &function);
-  gtret(1);
-}
+// int
+// main(void)
+// {
+//   gtinit();
+//   std::function<void(int, int, int)> function = callback;
+//   gtgo(f, 5, 6, &function);
+//   gtgo(f, 12, 13, &function);
+//   gtret(1);
+// }
+#endif
+
+#endif
