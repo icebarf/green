@@ -1,5 +1,6 @@
 #include <cassert>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -90,21 +91,35 @@ ArgStack fargstack;
 int int_cnt = 0;
 int fp_cnt = 0;
 
-template<typename T, std::size_t I = 0U>
+template<typename T,
+         std::size_t I = 0U,
+         std::size_t IntCnt = 0U,
+         std::size_t FPCnt = 0U>
 struct TupleIterator
 {
   template<typename C>
   void operator()(T& objects, C callback)
   {
     if constexpr (I < std::tuple_size_v<T>) {
-      callback(std::get<I>(objects));
-      TupleIterator<T, I + 1U>{}(objects, callback);
+      callback(std::get<I>(objects), IntCnt, FPCnt);
+      if constexpr (std::same_as<long double, decltype(std::get<I>(objects))>) {
+        TupleIterator<T, I + 1U, IntCnt, FPCnt>{}(objects, callback);
+        return;
+      } else if constexpr (std::is_integral_v<decltype(std::get<I>(objects))>) {
+        TupleIterator<T, I + 1U, IntCnt + 1U, FPCnt>{}(objects, callback);
+        return;
+      } else if constexpr (std::is_floating_point_v<decltype(std::get<I>(
+                             objects))>) {
+        TupleIterator<T, I + 1U, IntCnt, FPCnt + 1>{}(objects, callback);
+        return;
+      } else
+        TupleIterator<T, I + 1U>{}(objects, callback);
     }
   }
 };
 
 constexpr void
-arg_sorter_helper(auto elem)
+arg_sorter_helper(auto elem, std::size_t intcnt, std::size_t fpcnt)
 {
   auto assign = [&elem](auto& l) { l = elem; };
 
@@ -113,21 +128,21 @@ arg_sorter_helper(auto elem)
     return;
   }
 
-  if (std::is_integral_v<decltype(elem)> && int_cnt >= 6) {
-    int_cnt++;
+  if constexpr (std::is_integral_v<decltype(elem)> && intcnt >= 6) {
+    // int_cnt++;
     iargstack.push(elem);
     return;
   }
 
-  if (std::is_floating_point_v<decltype(elem)> && fp_cnt >= 8) {
-    fp_cnt++;
+  if constexpr (std::is_floating_point_v<decltype(elem)> && fpcnt >= 8) {
+    // fp_cnt++;
     fargstack.push(elem);
     return;
   }
 
   if constexpr (std::is_integral_v<decltype(elem)>) {
-    int_cnt++;
-    switch (int_cnt) {
+    // int_cnt++;
+    switch (intcnt) {
       case 1:
         assign(iargs.rdi);
         break;
@@ -153,8 +168,8 @@ arg_sorter_helper(auto elem)
   } // if constexpr integral
 
   if constexpr (std::is_floating_point_v<decltype(elem)>) {
-    fp_cnt++;
-    switch (fp_cnt) {
+    // fp_cnt++;
+    switch (fpcnt) {
       case 1:
         assign(fargs.xmm0);
         break;
@@ -185,8 +200,8 @@ arg_sorter_helper(auto elem)
     return;
   } // if constexpr floating
 
-  iargs.argcnt = int_cnt;
-  fargs.argcnt = fp_cnt;
+  iargs.argcnt = intcnt;
+  fargs.argcnt = fpcnt;
 }
 
 template<typename... Types>
@@ -211,6 +226,8 @@ gtswtch(Context* oldctx, Context* newctx, IntArgs& args)
   asm("mov     %%rbp, %%rax\n" // preserve base pointer <-- this line needs
                                // checking in calling convention
 
+      // ignore this line above
+
       "mov     %%rsp, 0x00(%%rdi)\n" // context switching
       "mov     %%r15, 0x08(%%rdi)\n"
       "mov     %%r14, 0x10(%%rdi)\n"
@@ -230,6 +247,8 @@ gtswtch(Context* oldctx, Context* newctx, IntArgs& args)
       // move from old stack (now %rax) to new stack (now %rbp)
       // above is an unverified choice of words, must confirm in calling
       // convention
+
+      // ignore comment above
 
       "mov %%r10, %%rdi\n" // argument passing
       "mov %%r11, %%rsi\n"
